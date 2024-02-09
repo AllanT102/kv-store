@@ -12,7 +12,7 @@ public class BTreeTest {
 
     @Before
     public void setUp() {
-        bTree = new BTree<>();
+        bTree = new BTree<Integer, String>();
     }
 
     @Test
