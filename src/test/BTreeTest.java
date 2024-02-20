@@ -2,17 +2,17 @@ package test;
 
 import static org.junit.Assert.*;
 
-import main.BTree;
+import main.BTreeOld;
 import org.junit.Before;
 import org.junit.Test;
 
 public class BTreeTest {
 
-    private BTree<Integer, String> bTree;
+    private BTreeOld<Integer, String> bTree;
 
     @Before
     public void setUp() {
-        bTree = new BTree<Integer, String>();
+        bTree = new BTreeOld<Integer, String>();
     }
 
     @Test
@@ -51,7 +51,7 @@ public class BTreeTest {
     }
 
     @Test
-    public void testputAndgetLargeDataset() {
+    public void testputAndgetAndDeleteLargeDataset() {
         // put a large number of key-value pairs
         for (int i = 1; i <= 1000; i++) {
             bTree.put(i, "Value" + i);
@@ -64,5 +64,11 @@ public class BTreeTest {
 
         // get for a non-existent key
         assertNull(bTree.get(2000));
+
+        // delete keys
+        bTree.delete(1);
+        bTree.delete(500);
+        assertNull(bTree.get(1));
+        assertNull(bTree.get(500));
     }
 }
