@@ -65,13 +65,29 @@ public class DatabaseTest {
     }
 
     @Test
-    void testResizing() throws IOException {
+    void testResizingGrowth() throws IOException {
         // We'll insert more items than would trigger a resize based on initial capacity and load factor
         int numEntries = (int) (16 * .75) + 1;
         for (int i = 0; i < numEntries; i++) {
             store.put("key" + i, "value" + i);
         }
         for (int i = 0; i < numEntries; i++) {
+            assertEquals("value" + i, store.get("key" + i), "All values should be retrievable post-resize.");
+        }
+    }
+
+    @Test
+    void testResizingShrink() throws IOException {
+        // enter enough for resize grow
+        int numEntries = (int) (16 * .75) + 1;
+        for (int i = 0; i < numEntries; i++) {
+            store.put("key" + i, "value" + i);
+        }
+        int lowerThreshold = (int) (numEntries * .875);
+        for (int i = 0; i < lowerThreshold; i++) {
+            store.delete("key" + i);
+        }
+        for (int i = lowerThreshold; i < numEntries; i++) {
             assertEquals("value" + i, store.get("key" + i), "All values should be retrievable post-resize.");
         }
     }

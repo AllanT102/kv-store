@@ -1,6 +1,5 @@
 package com.kvstore.main;
 
-import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.file.Files;
@@ -13,7 +12,10 @@ public class Database {
     private static final int RECORD_SIZE = 210; // 1 byte status + 8 bytes next + 100 bytes key + 100 bytes value
     private static final int KEY_SIZE = 100;
     private static final int VALUE_SIZE = 100;
-    private static final double LOAD_FACTOR = 0.75;
+    private static final double HIGHER_LOAD_FACTOR = 0.75;
+    private static final double LOWER_LOAD_FACTOR = .125;
+    private static final int SHRINK = 0;
+    private static final int GROW = 1;
 
     private int bucketCount;
     private int size; // Number of active records
@@ -69,8 +71,8 @@ public class Database {
     }
 
     public void put(String key, String value) throws IOException {
-        if ((size + 1) > (int) (bucketCount * LOAD_FACTOR)) {
-            resize();
+        if ((size + 1) > (int) (bucketCount * HIGHER_LOAD_FACTOR)) {
+            resize(GROW);
             this.store = new RandomAccessFile("data.data", "rw");
             this.store.seek(0);
         }
@@ -119,6 +121,13 @@ public class Database {
     }
 
     public void delete(String key) throws IOException {
+        if ((size - 1) < (int) (bucketCount * LOWER_LOAD_FACTOR)) {
+            System.out.println("resizing down");
+            resize(SHRINK);
+            this.store = new RandomAccessFile("data.data", "rw");
+            this.store.seek(0);
+        }
+
         long bucketIndex = hashKey(key) % bucketCount;
         long bucketOffset = Integer.BYTES + bucketIndex * Long.BYTES;
         store.seek(bucketOffset);
@@ -149,7 +158,7 @@ public class Database {
                     store.seek(bucketOffset);
                     store.writeLong(nextPos);
                 }
-
+                size--;
                 return;  // Exit after deleting the key
             }
 
@@ -162,17 +171,13 @@ public class Database {
          throw new IOException("Key not found: " + key);
     }
 
-    private void compact() throws IOException {
+    private void resize(int mode) throws IOException {
 
-    }
-
-    private void resize() throws IOException {
         String tempFileName = "tempStore_" + System.currentTimeMillis() + ".tmp";
         RandomAccessFile tempStore = new RandomAccessFile(tempFileName, "rw");
 
-
         // try to refactor here to use initializeBuckets()
-        int newBucketCount = this.bucketCount * 2;
+        int newBucketCount = mode == GROW ? this.bucketCount * 2 : Math.max(INITIAL_BUCKETS, this.bucketCount / 2);
         long[] newBuckets = new long[newBucketCount];
         for (int i = 0; i < newBucketCount; i++) {
             newBuckets[i] = 0;  // Initialize bucket pointers to 0
