@@ -1,5 +1,6 @@
 package com.kvstore.main;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.file.Files;
@@ -34,8 +35,10 @@ public class Database {
         store.setLength(Integer.BYTES + bucketCount * Long.BYTES);
         store.seek(0);
         store.writeInt(bucketCount);
+
+        // mark all buckets to be invalid status
         for (int i = 0; i < bucketCount; i++) {
-            store.writeLong(0); // Initialize all bucket pointers to 0
+            store.writeLong(0);
         }
     }
 
@@ -68,6 +71,8 @@ public class Database {
     public void put(String key, String value) throws IOException {
         if ((size + 1) > (int) (bucketCount * LOAD_FACTOR)) {
             resize();
+            this.store = new RandomAccessFile("data.data", "rw");
+            this.store.seek(0);
         }
 
         long bucketIndex = hashKey(key) % bucketCount;
@@ -113,12 +118,75 @@ public class Database {
         size++;
     }
 
-    private void resize() throws IOException {
-        Database newStore = new Database();
-        newStore.bucketCount = this.bucketCount * 2; // Double the number of buckets
-        newStore.initializeHashTable();
+    public void delete(String key) throws IOException {
+        long bucketIndex = hashKey(key) % bucketCount;
+        long bucketOffset = Integer.BYTES + bucketIndex * Long.BYTES;
+        store.seek(bucketOffset);
+        long headPos = store.readLong();
+        long currentPos = headPos;
+        long prevPos = 0;  // Keep track of the previous node's position to update links if needed
 
-        // Rehash all existing entries
+        while (currentPos != 0) {
+            store.seek(currentPos);
+            byte status = store.readByte();
+            long nextPos = store.readLong();
+            byte[] keyBytes = new byte[KEY_SIZE];
+            store.readFully(keyBytes);
+            String currentKey = new String(keyBytes).trim();
+
+            if (status == 1 && currentKey.equals(key)) {
+                // Mark the record as deleted by setting its status byte to 0
+                store.seek(currentPos);  // Go back to the start of the record
+                store.writeByte(0);  // Status byte to 0 to mark as deleted
+
+                // If you need to remove the record from the chain
+                if (prevPos != 0) {
+                    // Update the previous record's next pointer
+                    store.seek(prevPos + 1);  // Move to the position of the next pointer in the previous record
+                    store.writeLong(nextPos);  // Set the previous record's next pointer to skip the deleted record
+                } else {
+                    // Update the head pointer in the bucket if the head record is deleted
+                    store.seek(bucketOffset);
+                    store.writeLong(nextPos);
+                }
+
+                return;  // Exit after deleting the key
+            }
+
+            // Move to the next record in the chain
+            prevPos = currentPos;
+            currentPos = nextPos;
+        }
+
+        // If the key was not found, you might want to throw an exception or return a status
+         throw new IOException("Key not found: " + key);
+    }
+
+    private void compact() throws IOException {
+
+    }
+
+    private void resize() throws IOException {
+        String tempFileName = "tempStore_" + System.currentTimeMillis() + ".tmp";
+        RandomAccessFile tempStore = new RandomAccessFile(tempFileName, "rw");
+
+
+        // try to refactor here to use initializeBuckets()
+        int newBucketCount = this.bucketCount * 2;
+        long[] newBuckets = new long[newBucketCount];
+        for (int i = 0; i < newBucketCount; i++) {
+            newBuckets[i] = 0;  // Initialize bucket pointers to 0
+        }
+
+        // initialize new file
+        tempStore.setLength(Integer.BYTES + newBucketCount * Long.BYTES);
+        tempStore.seek(0);
+        tempStore.writeInt(newBucketCount);
+        // mark all buckets to be invalid status
+        for (int i = 0; i < newBucketCount; i++) {
+            tempStore.writeLong(0);
+        }
+
         for (int i = 0; i < bucketCount; i++) {
             long bucketOffset = Integer.BYTES + i * Long.BYTES;
             store.seek(bucketOffset);
@@ -132,18 +200,29 @@ public class Database {
                 byte[] valueBytes = new byte[VALUE_SIZE];
                 store.readFully(valueBytes);
                 if (status == 1) {
-                    newStore.put(new String(keyBytes).trim(), new
-                            String(valueBytes).trim());
+                    // rehash this value into the new file
+                    long newBucketIndex = hashKey(new String(keyBytes).trim()) % newBucketCount;
+                    long newBucketOffset = Integer.BYTES + newBucketIndex * Long.BYTES;
+                    tempStore.seek(newBucketOffset);
+                    long newEntryPos = tempStore.readLong();
+
+                    // Write new entry at the end of tempStore
+                    long writePos = tempStore.length();
+                    tempStore.seek(writePos);
+                    tempStore.writeByte(1);
+                    tempStore.writeLong(newBuckets[(int) newBucketIndex]);  // Update chain head
+                    tempStore.write(keyBytes);
+                    tempStore.write(valueBytes);
+                    newBuckets[(int) newBucketIndex] = writePos;
+                    tempStore.seek(newBucketOffset);
+                    tempStore.writeLong(writePos);
                 }
                 entryPos = nextPos;
             }
         }
         this.store.close();
-        newStore.store.close();
-        Files.move(Paths.get(newStore.store.getFD().toString()), Paths.get(this.store.getFD().toString()), StandardCopyOption.REPLACE_EXISTING);
-        this.store = newStore.store;
-        this.bucketCount = newStore.bucketCount;
-        this.size = newStore.size;
+        Files.move(Paths.get(tempFileName), Paths.get("data.data"), StandardCopyOption.REPLACE_EXISTING);
+        this.bucketCount = newBucketCount;
     }
 
     private long hashKey(String key) {

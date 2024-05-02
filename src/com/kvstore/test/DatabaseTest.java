@@ -38,6 +38,14 @@ public class DatabaseTest {
     }
 
     @Test
+    void testDeleteValue() throws IOException {
+        store.put("key1", "value1");
+        store.put("key2", "value2");
+        store.delete("key1");
+        assertNull(store.get("key1"), "Retrieved value should not exist.");
+    }
+
+    @Test
     void testPersistence() throws IOException {
         store.put("key1", "value1");
         store.close(); // Close and reopen to simulate persistence
