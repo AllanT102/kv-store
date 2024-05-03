@@ -1,66 +1,86 @@
 package com.kvstore.main;
 
 import java.io.IOException;
-import java.io.RandomAccessFile;
-import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 
+import static com.kvstore.main.BucketManager.INITIAL_BUCKETS;
+
+/**
+ * Represents a key-value store database which uses a file for data persistence.
+ * This class provides basic CRUD operations along with dynamic resizing based on
+ * load factors for efficient data handling.
+ */
 public class Database {
-    private RandomAccessFile store;
-    private static final int INITIAL_BUCKETS = 16;
-    private static final int RECORD_SIZE = 210; // 1 byte status + 8 bytes next + 100 bytes key + 100 bytes value
+    private FileManager fileManager;
+    private final BucketManager bucketManager;
     private static final int KEY_SIZE = 100;
     private static final int VALUE_SIZE = 100;
     private static final double HIGHER_LOAD_FACTOR = 0.75;
     private static final double LOWER_LOAD_FACTOR = .125;
     private static final int SHRINK = 0;
     private static final int GROW = 1;
+    private static final String DEFAULT_DATA_FILE_NAME = "data.data";
 
-    private int bucketCount;
     private int size; // Number of active records
 
+    /**
+     * Initializes a new Database instance. If the data file is empty, it initializes a new hash table.
+     * Otherwise, it reads the existing bucket count from the file.
+     *
+     * @throws IOException If there is an error opening the file or reading from it.
+     */
     public Database() throws IOException {
-        String fileName = "data.data";
-        this.store = new RandomAccessFile(fileName, "rw");
-        this.bucketCount = INITIAL_BUCKETS;
+        this.fileManager = new FileManager(DEFAULT_DATA_FILE_NAME, "rw");
+        this.bucketManager = new BucketManager();
         this.size = 0;
-        if (store.length() == 0) {
+        if (fileManager.getLength() == 0) {
             initializeHashTable();
         } else {
             // Assuming the first int in the file is the number of buckets
-            this.bucketCount = store.readInt();
+            bucketManager.setBucketCount(fileManager.readInt());
         }
     }
 
+    /**
+     * Initializes the hash table by setting all bucket pointers to zero and writing the bucket count to the file.
+     *
+     * @throws IOException If there is an error writing to the file.
+     */
     private void initializeHashTable() throws IOException {
-        store.setLength(Integer.BYTES + bucketCount * Long.BYTES);
-        store.seek(0);
-        store.writeInt(bucketCount);
+        fileManager.setLength(Integer.BYTES + bucketManager.getBucketCount() * Long.BYTES);
+        fileManager.seek(0);
+        fileManager.writeInt(bucketManager.getBucketCount());
 
         // mark all buckets to be invalid status
-        for (int i = 0; i < bucketCount; i++) {
-            store.writeLong(0);
+        for (int i = 0; i < bucketManager.getBucketCount(); i++) {
+            fileManager.writeLong(0);
         }
     }
 
+    /**
+     * Retrieves the value associated with the specified key.
+     *
+     * @param key The key whose associated value is to be returned.
+     * @return The value associated with the specified key, or null if no value is found.
+     * @throws IOException If an I/O error occurs during file access.
+     */
     public String get(String key) throws IOException {
-        long bucketIndex = hashKey(key) % bucketCount;
-        long bucketOffset = Integer.BYTES + bucketIndex * Long.BYTES; // Offset where the bucket pointer is stored
-        store.seek(bucketOffset);
-        long entryPos = store.readLong(); // Read the head of the chain for this bucket
+        long bucketOffset = bucketManager.getBucketOffset(key);
+        fileManager.seek(bucketOffset);
+        long entryPos = fileManager.readLong(); // Read the head of the chain for this bucket
 
         while (entryPos != 0) {
-            store.seek(entryPos);
-            byte status = store.readByte(); // Read the status of the record
-            long nextEntryPos = store.readLong(); // Read the pointer to the next record
+            fileManager.seek(entryPos);
+            byte status = fileManager.readByte(); // Read the status of the record
+            long nextEntryPos = fileManager.readLong(); // Read the pointer to the next record
             byte[] keyBytes = new byte[KEY_SIZE];
-            store.readFully(keyBytes); // Read the key
+            fileManager.readKey(keyBytes); // Read the key
             String currentKey = new String(keyBytes).trim();
 
             if (status == 1 && currentKey.equals(key)) {
                 byte[] valueBytes = new byte[VALUE_SIZE];
-                store.readFully(valueBytes); // Read the value
+                fileManager.readValue(valueBytes); // Read the value
                 return new String(valueBytes).trim(); // Return the found value
             }
 
@@ -70,29 +90,35 @@ public class Database {
         return null; // Key not found
     }
 
+    /**
+     * Inserts a new key-value pair or updates an existing pair in the database.
+     *
+     * @param key The key of the element to save.
+     * @param value The value to be associated with the key.
+     * @throws IOException If an I/O error occurs during file access.
+     */
     public void put(String key, String value) throws IOException {
-        if ((size + 1) > (int) (bucketCount * HIGHER_LOAD_FACTOR)) {
+        if ((size + 1) > (int) (bucketManager.getBucketCount() * HIGHER_LOAD_FACTOR)) {
             resize(GROW);
-            this.store = new RandomAccessFile("data.data", "rw");
-            this.store.seek(0);
+            fileManager = new FileManager(DEFAULT_DATA_FILE_NAME, "rw");
+            fileManager.seek(0);
         }
 
-        long bucketIndex = hashKey(key) % bucketCount;
-        long bucketOffset = Integer.BYTES + bucketIndex * Long.BYTES;
-        store.seek(bucketOffset);
-        long headPos = store.readLong();
+        long bucketOffset = bucketManager.getBucketOffset(key);
+        fileManager.seek(bucketOffset);
+        long headPos = fileManager.readLong();
         long currentPos = headPos;
         long prevPos = -1;
 
         while (currentPos != 0) {
-            store.seek(currentPos);
-            byte status = store.readByte();
-            long nextPos = store.readLong();
+            fileManager.seek(currentPos);
+            byte status = fileManager.readByte();
+            long nextPos = fileManager.readLong();
             byte[] keyBytes = new byte[KEY_SIZE];
-            store.readFully(keyBytes);
+            fileManager.readKey(keyBytes);
             if (status == 1 && new String(keyBytes).trim().equals(key)) {
                 // Key found, update value
-                store.write(fixLength(value, VALUE_SIZE).getBytes());
+                fileManager.write(fixLength(value, VALUE_SIZE).getBytes());
                 return;
             }
             prevPos = currentPos;
@@ -100,63 +126,69 @@ public class Database {
         }
 
         // No entry found, add new entry
-        long newEntryPos = store.length();
-        store.seek(newEntryPos);
-        store.writeByte(1); // Active record
-        store.writeLong(0); // Next pointer
-        store.write(fixLength(key, KEY_SIZE).getBytes());
-        store.write(fixLength(value, VALUE_SIZE).getBytes());
+        long newEntryPos = fileManager.getLength();
+        fileManager.seek(newEntryPos);
+        fileManager.writeByte(1); // Active record
+        fileManager.writeLong(0); // Next pointer
+        fileManager.write(fixLength(key, KEY_SIZE).getBytes());
+        fileManager.write(fixLength(value, VALUE_SIZE).getBytes());
 
         if (prevPos == -1) {
             // Updating head of the bucket
-            store.seek(bucketOffset);
-            store.writeLong(newEntryPos);
+            fileManager.seek(bucketOffset);
+            fileManager.writeLong(newEntryPos);
         } else {
             // Updating the previous record's next pointer
-            store.seek(prevPos + 1); // +1 to skip the status byte
-            store.writeLong(newEntryPos);
+            fileManager.seek(prevPos + 1); // +1 to skip the status byte
+            fileManager.writeLong(newEntryPos);
         }
 
         size++;
     }
 
+
+    /**
+     * Deletes the entry associated with the specified key, if it exists.
+     *
+     * @param key The key whose entry is to be deleted.
+     * @throws IOException If an I/O error occurs during file access or the key does not exist.
+     */
     public void delete(String key) throws IOException {
-        if ((size - 1) < (int) (bucketCount * LOWER_LOAD_FACTOR)) {
+        if ((size - 1) < (int) (bucketManager.getBucketCount() * LOWER_LOAD_FACTOR)) {
             System.out.println("resizing down");
             resize(SHRINK);
-            this.store = new RandomAccessFile("data.data", "rw");
-            this.store.seek(0);
+            fileManager = new FileManager(DEFAULT_DATA_FILE_NAME, "rw");
+            fileManager.seek(0);
         }
 
-        long bucketIndex = hashKey(key) % bucketCount;
-        long bucketOffset = Integer.BYTES + bucketIndex * Long.BYTES;
-        store.seek(bucketOffset);
-        long headPos = store.readLong();
+        long bucketOffset = bucketManager.getBucketOffset(key);
+        fileManager.seek(bucketOffset);
+        long headPos = fileManager.readLong();
         long currentPos = headPos;
         long prevPos = 0;  // Keep track of the previous node's position to update links if needed
 
         while (currentPos != 0) {
-            store.seek(currentPos);
-            byte status = store.readByte();
-            long nextPos = store.readLong();
+            fileManager.seek(currentPos);
+            byte status = fileManager.readByte();
+            long nextPos = fileManager.readLong();
             byte[] keyBytes = new byte[KEY_SIZE];
-            store.readFully(keyBytes);
+            fileManager.readKey(keyBytes);
             String currentKey = new String(keyBytes).trim();
 
             if (status == 1 && currentKey.equals(key)) {
                 // Mark the record as deleted by setting its status byte to 0
-                store.seek(currentPos);  // Go back to the start of the record
-                store.writeByte(0);  // Status byte to 0 to mark as deleted
+                fileManager.seek(currentPos);  // Go back to the start of the record
+                fileManager.writeByte(0);  // Status byte to 0 to mark as deleted
 
                 // If you need to remove the record from the chain
                 if (prevPos != 0) {
                     // Update the previous record's next pointer
-                    store.seek(prevPos + 1);  // Move to the position of the next pointer in the previous record
-                    store.writeLong(nextPos);  // Set the previous record's next pointer to skip the deleted record
+                    fileManager.seek(prevPos + 1);  // Move to the position of the next pointer in the previous record
+                    fileManager.writeLong(nextPos);  // Set the previous record's next pointer to skip the deleted record
                 } else {
                     // Update the head pointer in the bucket if the head record is deleted
-                    store.seek(bucketOffset);
-                    store.writeLong(nextPos);
+                    fileManager.seek(bucketOffset);
+                    fileManager.writeLong(nextPos);
                 }
                 size--;
                 return;  // Exit after deleting the key
@@ -171,76 +203,96 @@ public class Database {
          throw new IOException("Key not found: " + key);
     }
 
+
+    /**
+     * Resizes the hash table based on the specified mode. The size can be doubled or halved.
+     *
+     * @param mode The operation mode, either SHRINK (0) or GROW (1), where SHRINK halves the bucket count,
+     *             and GROW doubles it.
+     * @throws IOException If an I/O error occurs during resizing operations.
+     */
     private void resize(int mode) throws IOException {
-
         String tempFileName = "tempStore_" + System.currentTimeMillis() + ".tmp";
-        RandomAccessFile tempStore = new RandomAccessFile(tempFileName, "rw");
+        FileManager tempFileManager = new FileManager(tempFileName, "rw");
+        BucketManager tempBucketManager = new BucketManager();
 
-        // try to refactor here to use initializeBuckets()
-        int newBucketCount = mode == GROW ? this.bucketCount * 2 : Math.max(INITIAL_BUCKETS, this.bucketCount / 2);
+        // try to refactor here to use initializeBuckets();
+        int newBucketCount = mode == GROW ? bucketManager.getBucketCount() * 2
+                : Math.max(INITIAL_BUCKETS, bucketManager.getBucketCount() / 2);
+        tempBucketManager.setBucketCount(newBucketCount);
         long[] newBuckets = new long[newBucketCount];
         for (int i = 0; i < newBucketCount; i++) {
             newBuckets[i] = 0;  // Initialize bucket pointers to 0
         }
 
         // initialize new file
-        tempStore.setLength(Integer.BYTES + newBucketCount * Long.BYTES);
-        tempStore.seek(0);
-        tempStore.writeInt(newBucketCount);
+        tempFileManager.setLength(Integer.BYTES + newBucketCount * Long.BYTES);
+        tempFileManager.seek(0);
+        tempFileManager.writeInt(newBucketCount);
         // mark all buckets to be invalid status
         for (int i = 0; i < newBucketCount; i++) {
-            tempStore.writeLong(0);
+            tempFileManager.writeLong(0);
         }
 
-        for (int i = 0; i < bucketCount; i++) {
+        for (int i = 0; i < bucketManager.getBucketCount(); i++) {
             long bucketOffset = Integer.BYTES + i * Long.BYTES;
-            store.seek(bucketOffset);
-            long entryPos = store.readLong();
+            fileManager.seek(bucketOffset);
+            long entryPos = fileManager.readLong();
             while (entryPos != 0) {
-                store.seek(entryPos);
-                byte status = store.readByte();
-                long nextPos = store.readLong();
+                fileManager.seek(entryPos);
+                byte status = fileManager.readByte();
+                long nextPos = fileManager.readLong();
                 byte[] keyBytes = new byte[KEY_SIZE];
-                store.readFully(keyBytes);
+                fileManager.readKey(keyBytes);
                 byte[] valueBytes = new byte[VALUE_SIZE];
-                store.readFully(valueBytes);
+                fileManager.readValue(valueBytes);
                 if (status == 1) {
                     // rehash this value into the new file
-                    long newBucketIndex = hashKey(new String(keyBytes).trim()) % newBucketCount;
-                    long newBucketOffset = Integer.BYTES + newBucketIndex * Long.BYTES;
-                    tempStore.seek(newBucketOffset);
-                    long newEntryPos = tempStore.readLong();
+                    long newBucketIndex = tempBucketManager.getBucketIndex(new String(keyBytes).trim());
+                    long newBucketOffset = tempBucketManager.getBucketOffset(new String(keyBytes).trim());
+                    tempFileManager.seek(newBucketOffset);
+                    long newEntryPos = tempFileManager.readLong();
 
                     // Write new entry at the end of tempStore
-                    long writePos = tempStore.length();
-                    tempStore.seek(writePos);
-                    tempStore.writeByte(1);
-                    tempStore.writeLong(newBuckets[(int) newBucketIndex]);  // Update chain head
-                    tempStore.write(keyBytes);
-                    tempStore.write(valueBytes);
+                    long writePos = tempFileManager.getLength();
+                    tempFileManager.seek(writePos);
+                    tempFileManager.writeByte(1);
+                    tempFileManager.writeLong(newBuckets[(int) newBucketIndex]);  // Update chain head
+                    tempFileManager.write(keyBytes);
+                    tempFileManager.write(valueBytes);
                     newBuckets[(int) newBucketIndex] = writePos;
-                    tempStore.seek(newBucketOffset);
-                    tempStore.writeLong(writePos);
+                    tempFileManager.seek(newBucketOffset);
+                    tempFileManager.writeLong(writePos);
                 }
                 entryPos = nextPos;
             }
         }
-        this.store.close();
-        Files.move(Paths.get(tempFileName), Paths.get("data.data"), StandardCopyOption.REPLACE_EXISTING);
-        this.bucketCount = newBucketCount;
+        fileManager.close();
+        fileManager.moveFile(Paths.get(tempFileName), Paths.get("data.data"), StandardCopyOption.REPLACE_EXISTING);
+        bucketManager.setBucketCount(newBucketCount);
     }
 
-    private long hashKey(String key) {
-        return key.hashCode() & 0x7fffffff; // Non-negative hash code
-    }
-
+    /**
+     * Adjusts the length of the given string to a specified length by padding it with spaces
+     * on the right if it is shorter than the desired length. If the string is longer than the
+     * specified length, it will be truncated to fit.
+     *
+     * @param string The string to be adjusted.
+     * @param length The desired length of the string. Must be non-negative.
+     * @return A string adjusted to the specified length.
+     */
     private String fixLength(String string, int length) {
         return String.format("%-" + length + "s", string);
     }
 
+    /**
+     * Closes the file manager and releases any system resources associated with the file.
+     *
+     * @throws IOException If an I/O error occurs.
+     */
     public void close() throws IOException {
-        if (store != null) {
-            store.close();
+        if (fileManager != null) {
+            fileManager.close();
         }
     }
 }

@@ -26,81 +26,85 @@ public class DatabaseTest {
 
     @Test
     void testPutAndGet() throws IOException {
-        store.put("key1", "value1");
-        assertEquals("value1", store.get("key1"), "Retrieved value should match the stored value.");
+        String jsonValue = "{\"name\": \"value1\"}";
+        store.put("key1", jsonValue);
+        assertEquals(jsonValue, store.get("key1"), "Retrieved value should match the stored JSON value.");
     }
 
     @Test
     void testUpdateValue() throws IOException {
-        store.put("key1", "value1");
-        store.put("key1", "value2");
-        assertEquals("value2", store.get("key1"), "Retrieved value should be updated value.");
+        String jsonValue1 = "{\"name\": \"value1\"}";
+        String jsonValue2 = "{\"name\": \"value2\"}";
+        store.put("key1", jsonValue1);
+        store.put("key1", jsonValue2);
+        assertEquals(jsonValue2, store.get("key1"), "Retrieved value should be updated JSON value.");
     }
 
     @Test
     void testDeleteValue() throws IOException {
-        store.put("key1", "value1");
-        store.put("key2", "value2");
+        String jsonValue1 = "{\"name\": \"value1\"}";
+        String jsonValue2 = "{\"name\": \"value2\"}";
+        store.put("key1", jsonValue1);
+        store.put("key2", jsonValue2);
         store.delete("key1");
-        assertNull(store.get("key1"), "Retrieved value should not exist.");
+        assertNull(store.get("key1"), "Deleted JSON value should not exist.");
     }
 
     @Test
     void testPersistence() throws IOException {
-        store.put("key1", "value1");
+        String jsonValue = "{\"name\": \"value1\"}";
+        store.put("key1", jsonValue);
         store.close(); // Close and reopen to simulate persistence
         store = new Database();
-        assertEquals("value1", store.get("key1"), "Value should persist after store is reopened.");
+        assertEquals(jsonValue, store.get("key1"), "JSON value should persist after store is reopened.");
     }
 
     @Test
     void testCollisionHandling() throws IOException {
-        // Assuming hash function might cause these two keys to collide
-        store.put("key1", "value1");
-        store.put("key2", "value2");
+        String jsonValue1 = "{\"name\": \"value1\"}";
+        String jsonValue2 = "{\"name\": \"value2\"}";
+        store.put("key1", jsonValue1);
+        store.put("key2", jsonValue2);
         assertAll(
-                () -> assertEquals("value1", store.get("key1")),
-                () -> assertEquals("value2", store.get("key2"))
+                () -> assertEquals(jsonValue1, store.get("key1"), "First key should retrieve its correct JSON value."),
+                () -> assertEquals(jsonValue2, store.get("key2"), "Second key should retrieve its correct JSON value.")
         );
     }
 
     @Test
     void testResizingGrowth() throws IOException {
-        // We'll insert more items than would trigger a resize based on initial capacity and load factor
         int numEntries = (int) (16 * .75) + 1;
         for (int i = 0; i < numEntries; i++) {
-            store.put("key" + i, "value" + i);
+            store.put("key" + i, "{\"value\": \"value" + i + "\"}");
         }
         for (int i = 0; i < numEntries; i++) {
-            assertEquals("value" + i, store.get("key" + i), "All values should be retrievable post-resize.");
+            assertEquals("{\"value\": \"value" + i + "\"}", store.get("key" + i), "All JSON values should be retrievable post-resize.");
         }
     }
 
     @Test
     void testResizingShrink() throws IOException {
-        // enter enough for resize grow
         int numEntries = (int) (16 * .75) + 1;
         for (int i = 0; i < numEntries; i++) {
-            store.put("key" + i, "value" + i);
+            store.put("key" + i, "{\"value\": \"value" + i + "\"}");
         }
         int lowerThreshold = (int) (numEntries * .875);
         for (int i = 0; i < lowerThreshold; i++) {
             store.delete("key" + i);
         }
         for (int i = lowerThreshold; i < numEntries; i++) {
-            assertEquals("value" + i, store.get("key" + i), "All values should be retrievable post-resize.");
+            assertEquals("{\"value\": \"value" + i + "\"}", store.get("key" + i), "All JSON values should be retrievable post-resize.");
         }
     }
 
     @Test
     void testLargeAmountOfData() throws IOException {
-        // Test the store with a large amount of data to check stability and performance
-        int largeNumEntries = 1000; // Consider increasing this number based on system capability
+        int largeNumEntries = 1000;
         for (int i = 0; i < largeNumEntries; i++) {
-            store.put("key" + i, "value" + i);
+            store.put("key" + i, "{\"value\": \"value" + i + "\"}");
         }
         for (int i = 0; i < largeNumEntries; i++) {
-            assertEquals("value" + i, store.get("key" + i), "All values should be retrievable.");
+            assertEquals("{\"value\": \"value" + i + "\"}", store.get("key" + i), "All JSON values should be retrievable.");
         }
     }
 }
