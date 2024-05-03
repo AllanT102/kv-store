@@ -10,6 +10,11 @@ import org.junit.jupiter.api.Test;
 import java.io.File;
 import java.io.IOException;
 
+/**
+ * Unit and integration tests for the Database class, ensuring functionality for CRUD operations
+ * and cache behavior under various scenarios. Tests validate correct data handling and performance
+ * constraints.
+ */
 public class DatabaseTest {
     private Database store;
 

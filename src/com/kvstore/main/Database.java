@@ -12,17 +12,19 @@ import static com.kvstore.main.BucketManager.INITIAL_BUCKETS;
  * load factors for efficient data handling.
  */
 public class Database {
-    private FileManager fileManager;
-    private final BucketManager bucketManager;
     private static final int KEY_SIZE = 100;
     private static final int VALUE_SIZE = 100;
     private static final double HIGHER_LOAD_FACTOR = 0.75;
-    private static final double LOWER_LOAD_FACTOR = .125;
+    private static final double LOWER_LOAD_FACTOR = 0.125;
     private static final int SHRINK = 0;
     private static final int GROW = 1;
     private static final String DEFAULT_DATA_FILE_NAME = "data.data";
 
-    private int size; // Number of active records
+    private FileManager fileManager;
+    private final BucketManager bucketManager;
+    private final LRUCache cache;
+
+    private int size;  // Number of active records
 
     /**
      * Initializes a new Database instance. If the data file is empty, it initializes a new hash table.
@@ -33,6 +35,7 @@ public class Database {
     public Database() throws IOException {
         this.fileManager = new FileManager(DEFAULT_DATA_FILE_NAME, "rw");
         this.bucketManager = new BucketManager();
+        this.cache = new LRUCache();
         this.size = 0;
         if (fileManager.getLength() == 0) {
             initializeHashTable();
@@ -66,6 +69,8 @@ public class Database {
      * @throws IOException If an I/O error occurs during file access.
      */
     public String get(String key) throws IOException {
+        String value;
+        if ((value = cache.get(key)) != null) return value;
         long bucketOffset = bucketManager.getBucketOffset(key);
         fileManager.seek(bucketOffset);
         long entryPos = fileManager.readLong(); // Read the head of the chain for this bucket
@@ -81,6 +86,7 @@ public class Database {
             if (status == 1 && currentKey.equals(key)) {
                 byte[] valueBytes = new byte[VALUE_SIZE];
                 fileManager.readValue(valueBytes); // Read the value
+                cache.put(key, new String(valueBytes).trim());
                 return new String(valueBytes).trim(); // Return the found value
             }
 
@@ -98,6 +104,7 @@ public class Database {
      * @throws IOException If an I/O error occurs during file access.
      */
     public void put(String key, String value) throws IOException {
+        cache.put(key, value);
         if ((size + 1) > (int) (bucketManager.getBucketCount() * HIGHER_LOAD_FACTOR)) {
             resize(GROW);
             fileManager = new FileManager(DEFAULT_DATA_FILE_NAME, "rw");
@@ -154,6 +161,7 @@ public class Database {
      * @throws IOException If an I/O error occurs during file access or the key does not exist.
      */
     public void delete(String key) throws IOException {
+        cache.delete(key);
         if ((size - 1) < (int) (bucketManager.getBucketCount() * LOWER_LOAD_FACTOR)) {
             System.out.println("resizing down");
             resize(SHRINK);
