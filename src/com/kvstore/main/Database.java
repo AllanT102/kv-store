@@ -163,7 +163,6 @@ public class Database {
     public void delete(String key) throws IOException {
         cache.delete(key);
         if ((size - 1) < (int) (bucketManager.getBucketCount() * LOWER_LOAD_FACTOR)) {
-            System.out.println("resizing down");
             resize(SHRINK);
             fileManager = new FileManager(DEFAULT_DATA_FILE_NAME, "rw");
             fileManager.seek(0);
