@@ -3,8 +3,6 @@
 ## Overview
 This KeyValue Store is a simple yet robust database system designed for efficient storage and retrieval of key-value pairs. It integrates an LRU (Least Recently Used) cache mechanism to enhance read performance by caching frequently accessed data.
 
-It utilizes separate ch
-
 ## Features
 
 ## Collision Handling & Hashing
